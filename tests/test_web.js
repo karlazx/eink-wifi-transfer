@@ -9,9 +9,10 @@ class Element {
   constructor(tag) { this.tag = tag; this.children = []; this.textContent = ''; this.disabled = false; }
   append(...children) { this.children.push(...children); }
   replaceChildren(...children) { this.children = children; }
+  setAttribute(name, value) { this[name] = value; }
 }
 function setup() {
-  const ids = Object.fromEntries(['picker', 'queue-empty', 'queue', 'count', 'files', 'message', 'refresh'].map(id => [id, new Element(id)]));
+  const ids = Object.fromEntries(['picker', 'queue-empty', 'queue', 'count', 'files', 'message', 'refresh', 'storage-message', 'storage-path', 'storage-up', 'storage-files', 'received-panel', 'all-panel', 'tab-received', 'tab-all', 'storage-refresh'].map(id => [id, new Element(id)]));
   const files = new Map(), requests = [];
   let held = false, disconnected = false, deleteRequests = 0;
   const ctx = vm.createContext({
@@ -21,7 +22,7 @@ function setup() {
     fetch: async (url, options) => {
       if (disconnected) throw new Error('offline');
       if (options.method === 'DELETE') { deleteRequests++; files.delete(decodeURIComponent(url.split('name=')[1])); }
-      return {ok:true, json:async () => url === '/api/files' ? [...files].map(([name, size]) => ({name, size})) : {ok:true}};
+      return {ok:true, json:async () => url === '/api/files' ? [...files].map(([name, size]) => ({name, size})) : url.startsWith('/api/storage?') ? [{name:'图书',path:'图书',directory:true,size:0},{name:'只读.txt',path:'只读.txt',directory:false,size:3}] : {ok:true}};
     },
     XMLHttpRequest: class {
       constructor() { this.upload = {}; requests.push(this); }
@@ -83,4 +84,25 @@ test('取消删除确认不发出 DELETE 请求', async () => {
   const app = setup(); app.files.set('keep',5); await tick();
   const deleteButton = app.ids.files.children[0].children[0].children[1].children[1];
   await deleteButton.onclick(); assert.equal(app.deleted(),0); assert.equal(app.files.get('keep'),5);
+});
+
+test('全部文件 tab 仅目录和下载，没有删除操作', async () => {
+  const app = setup(); await tick(); app.ids['tab-all'].onclick(); await tick();
+  assert.equal(app.ids['all-panel'].hidden, false);
+  assert.equal(app.ids['received-panel'].hidden, true);
+  assert.equal(app.ids['tab-all']['aria-selected'], 'true');
+  const rows = app.ids['storage-files'].children;
+  assert.equal(rows[0].children[0].children[1].textContent, '打开目录');
+  const download = rows[1].children[0].children[1];
+  assert.equal(download.tag,'a'); assert.equal(download.textContent,'下载');
+  assert.match(download.href,/^\/api\/storage\/file\?path=/);
+  assert.equal(app.deleted(),0);
+  app.ids['tab-received'].onclick(); assert.equal(app.ids['all-panel'].hidden,true);
+});
+
+test('5 GiB 前端阈值：3 GiB 元数据允许，超过 5 GiB 拒绝', async () => {
+  const app = setup(); await tick();
+  app.pick([{name:'three-gib-size-only',size:3221225472},{name:'over-limit-size-only',size:5368709121}]); await tick();
+  assert.deepEqual(Array.from(app.queue(), item => item.state), ['success','failed']);
+  assert.match(app.queue()[1].label.textContent,/5 GiB/);
 });

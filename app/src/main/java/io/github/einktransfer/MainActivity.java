@@ -44,11 +44,11 @@ public final class MainActivity extends Activity {
         LinearLayout.LayoutParams imageParams = new LinearLayout.LayoutParams(dp(230), dp(230));
         imageParams.gravity = Gravity.CENTER_HORIZONTAL; imageParams.setMargins(0, dp(12), 0, dp(12)); body.addView(qr, imageParams);
         toggle = button("停止服务", () -> { if (server == null) { wanted = true; start(); } else { wanted = false; stop(); } }); body.addView(toggle);
-        body.addView(button("查看接收文件", this::showFiles));
+        body.addView(button("打开文件管理器", this::openFileManager));
         body.addView(button("刷新连接状态", () -> { stop(); wanted = true; start(); }));
         body.addView(button("开源许可", this::showLicenses));
         summary = text("", 17); body.addView(summary);
-        body.addView(text("保存位置：共享存储 / EInkTransfer\n单文件上限 2 GiB；同名文件不覆盖。\n\n请保持此界面打开，切换应用会停止传输。\n仅在可信局域网使用：服务开启期间，同网用户可上传、下载和删除接收目录中的文件。\n\n只负责传输，不自动打开文件或安装应用。", 16));
+        body.addView(text("保存位置：共享存储 / EInkTransfer\n单文件上限 5 GiB；同名文件不覆盖。\n\n请保持此界面打开，切换应用会停止传输。\n仅在可信局域网使用：同网用户可管理接收目录，并在“全部文件”中只读浏览共享存储。\n\n需要打开文件或安装 APK 时，请点击“打开文件管理器”。", 16));
         registerReceiver(network, new IntentFilter(ConnectivityManager.CONNECTIVITY_ACTION));
     }
     private int dp(int n) { return (int)(n * getResources().getDisplayMetrics().density + 0.5f); }
@@ -77,7 +77,7 @@ public final class MainActivity extends Activity {
         String ip = wifiIp();
         if (ip == null) { state.setText("请连接 Wi-Fi 后重试"); toggle.setText("重试启动"); return; }
         try {
-            server = new TransferServer(directory, ip, 8080, path -> getAssets().open("web/" + path),
+            server = new TransferServer(directory, Environment.getExternalStorageDirectory(), ip, 8080, path -> getAssets().open("web/" + path),
                 () -> runOnUiThread(this::updateSummary));
             servingIp = ip; String url = "http://" + ip + ":8080";
             address.setText(url); qr.setImageBitmap(makeQr(url)); qr.setVisibility(View.VISIBLE);
@@ -121,24 +121,18 @@ public final class MainActivity extends Activity {
         content.setText(b); ScrollView view = new ScrollView(this); view.addView(content);
         new AlertDialog.Builder(this).setTitle("开源许可").setView(view).setPositiveButton("返回", null).show();
     }
-    private void showFiles() {
-        final TextView content = text("", 17);
-        Runnable refresh = () -> {
-            try {
-                if (server == null) { content.setText("请先启动服务，再查看接收文件。\n保存位置：共享存储 / EInkTransfer"); return; }
-                JSONArray files = new JSONArray(server.fileList()); StringBuilder b = new StringBuilder();
-                for (int i = 0; i < Math.min(files.length(), 500); i++) {
-                    JSONObject f = files.getJSONObject(i); b.append(f.getString("name")).append("\n").append(f.getLong("size")).append(" 字节\n\n");
-                }
-                if (files.length() > 500) b.append("仅显示前 500 项，完整列表请在浏览器查看。");
-                content.setText(files.length() == 0 ? "还没有接收文件，打开浏览器开始上传。" : b.toString());
-            } catch (Exception e) { content.setText("读取失败，请检查存储后重试。"); }
-        };
-        content.setPadding(dp(20), dp(12), dp(20), dp(12));
-        ScrollView list = new ScrollView(this); list.addView(content); refresh.run();
-        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("接收文件 · EInkTransfer").setView(list)
-            .setPositiveButton("返回传输", null).setNeutralButton("刷新", null).create();
-        dialog.setOnShowListener(d -> dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(v -> refresh.run())); dialog.show();
+    private void openFileManager() {
+        Intent vendor = new Intent("com.boyue.filemanager.open").setPackage("com.boyue.filemanager");
+        vendor.putExtra("rootPath", directory.getAbsolutePath());
+        vendor.putExtra("folderPath", directory.getAbsolutePath());
+        try { startActivity(vendor); return; } catch (ActivityNotFoundException ignored) { }
+        for (String name : new String[]{"com.boyue.filemanager", "com.estrongs.android.pop", "com.android.documentsui"}) {
+            Intent launch = getPackageManager().getLaunchIntentForPackage(name);
+            if (launch != null) {
+                try { startActivity(launch); return; } catch (ActivityNotFoundException ignored) { }
+            }
+        }
+        Toast.makeText(this, "未找到文件管理器，请安装后重试。接收位置：共享存储 / EInkTransfer", Toast.LENGTH_LONG).show();
     }
     @Override protected void onStart() { super.onStart(); visible = true; if (wanted) start(); }
     @Override protected void onStop() { visible = false; stop(); super.onStop(); }

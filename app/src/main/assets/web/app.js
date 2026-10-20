@@ -42,7 +42,7 @@ $('picker').onchange = event => {
     detail.append(element('div', file.name, 'name'), element('div', size(file.size), 'meta'), label);
     row.append(detail, cancel); li.append(row, progress); $('queue').append(li);
     const item = {file, label, cancel, progress, state:'waiting'};
-    if (file.size > 2147483648) { item.state = 'failed'; status(item, '超过单文件上限 2 GiB', 'error'); cancel.disabled = true; }
+    if (file.size > 5368709120) { item.state = 'failed'; status(item, '超过单文件上限 5 GiB', 'error'); cancel.disabled = true; }
     else if (known.has(file.name) || queue.some(i => i.file.name === file.name && ['waiting','uploading'].includes(i.state))) {
       item.state = 'failed'; status(item, '文件已存在或已在队列中，未覆盖', 'error'); cancel.disabled = true;
     }
@@ -92,3 +92,38 @@ async function pump() {
 }
 $('refresh').onclick = () => refresh().catch(() => {});
 refresh().catch(() => {});
+
+// 全部文件采用独立只读接口，不复用接收目录的删除路径。
+let storagePath = '', storageRequest = 0;
+async function browseStorage(path) {
+  const sequence = ++storageRequest;
+  $('storage-message').textContent = '正在读取…';
+  try {
+    const files = await api('/api/storage?path=' + encodeURIComponent(path));
+    if (sequence !== storageRequest) return;
+    storagePath = path; $('storage-path').textContent = '共享存储 /' + path;
+    $('storage-up').disabled = !path; $('storage-files').replaceChildren();
+    for (const file of files) {
+      const li = element('li'), row = element('div', undefined, 'row'), detail = element('div', undefined, 'details');
+      detail.append(element('div', file.name, 'name'), element('div', file.directory ? '文件夹' : size(file.size), 'meta'));
+      let action;
+      if (file.directory) { action = element('button', '打开目录'); action.onclick = () => browseStorage(file.path); }
+      else { action = element('a', '下载', 'download'); action.href = '/api/storage/file?path=' + encodeURIComponent(file.path); action.download = file.name; }
+      row.append(detail, action); li.append(row); $('storage-files').append(li);
+    }
+    if (!files.length) $('storage-files').append(element('li', '此目录中没有可读取的文件。', 'hint'));
+    $('storage-message').textContent = '只读 · ' + files.length + ' 项'; $('storage-message').className = '';
+  } catch (e) {
+    if (sequence !== storageRequest) return;
+    $('storage-message').textContent = e.message + '。请检查连接或目录读取权限，当前列表可能不是最新。'; $('storage-message').className = 'error';
+  }
+}
+function selectTab(all) {
+  $('received-panel').hidden = all; $('all-panel').hidden = !all;
+  $('tab-received').setAttribute('aria-selected', String(!all)); $('tab-all').setAttribute('aria-selected', String(all));
+  if (all) browseStorage(storagePath);
+}
+$('tab-received').onclick = () => selectTab(false);
+$('tab-all').onclick = () => selectTab(true);
+$('storage-refresh').onclick = () => browseStorage(storagePath);
+$('storage-up').onclick = () => browseStorage(storagePath.split('/').slice(0, -1).join('/'));

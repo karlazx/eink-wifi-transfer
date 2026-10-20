@@ -36,3 +36,4 @@ tmp/
 captures/
 __pycache__/
 *.pyc
+.signing/

@@ -8,9 +8,9 @@ import java.util.concurrent.*;
 
 /** 小型 HTTP/1.1 服务。每个连接一个请求；上传体不经过内存缓冲。 */
 public final class TransferServer implements Closeable {
-    public static final long MAX_FILE_SIZE = 2L * 1024 * 1024 * 1024;
+    public static final long MAX_FILE_SIZE = 5L * 1024 * 1024 * 1024;
     public interface Assets { InputStream open(String path) throws IOException; }
-    private final File root, partials;
+    private final File root, partials, storage;
     private final Assets assets;
     private final Runnable changed;
     private final ServerSocket listener;
@@ -22,7 +22,11 @@ public final class TransferServer implements Closeable {
     private volatile boolean running = true;
 
     public TransferServer(File directory, String address, int port, Assets assets, Runnable changed) throws IOException {
+        this(directory, directory, address, port, assets, changed);
+    }
+    public TransferServer(File directory, File storage, String address, int port, Assets assets, Runnable changed) throws IOException {
         this.root = directory.getCanonicalFile(); this.assets = assets; this.changed = changed;
+        this.storage = storage.getCanonicalFile();
         if ((!root.isDirectory() && !root.mkdirs()) || !root.canWrite()) throw new IOException("无法访问保存目录");
         partials = new File(root, ".eink-partials");
         if (!partials.getCanonicalFile().equals(partials.getAbsoluteFile())) throw new IOException("临时目录无效");
@@ -93,23 +97,60 @@ public final class TransferServer implements Closeable {
             String length = headers.get("content-length"); long size;
             try { if (length == null || !length.matches("[0-9]+")) throw new NumberFormatException(); size = Long.parseLong(length); }
             catch (NumberFormatException e) { throw new Problem(411, "需要有效文件长度"); }
-            if (size > MAX_FILE_SIZE) throw new Problem(413, "单文件上限为 2 GiB");
+            if (size > MAX_FILE_SIZE) throw new Problem(413, "单文件上限为 5 GiB");
             upload(name, size, in); json(out, 201, "{\"ok\":true}");
         } else if (method.equals("GET") && path.equals("/api/file")) {
-            File file = existing(name);
-            try (InputStream src = new FileInputStream(file)) {
-                String encoded = URLEncoder.encode(file.getName(), "UTF-8").replace("+", "%20");
-                head(out, 200, "application/octet-stream", file.length(),
-                    "Content-Disposition: attachment; filename=\"download\"; filename*=UTF-8''" + encoded + "\r\n");
-                copy(src, out);
-            }
+            download(out, existing(name));
         } else if (method.equals("DELETE") && path.equals("/api/file")) {
             synchronized (commitLock) {
                 File file = existing(name);
                 if (!file.delete()) throw new Problem(500, "删除失败，请重试");
             }
             notifyChanged(); json(out, 200, "{\"ok\":true}");
+        } else if (path.equals("/api/storage") || path.equals("/api/storage/file")) {
+            if (!method.equals("GET")) throw new Problem(405, "全部文件仅支持浏览和下载");
+            File file = storageFile(queryValue(q < 0 ? "" : target.substring(q + 1), "path"));
+            if (path.equals("/api/storage")) json(out, 200, storageList(file));
+            else { if (!file.isFile()) throw new Problem(404, "文件不存在"); download(out, file); }
         } else throw new Problem(404, "请求的资源不存在");
+    }
+
+    private static void download(OutputStream out, File file) throws IOException {
+        try (InputStream src = new FileInputStream(file)) {
+            String encoded = URLEncoder.encode(file.getName(), "UTF-8").replace("+", "%20");
+            head(out, 200, "application/octet-stream", file.length(),
+                "Content-Disposition: attachment; filename=\"download\"; filename*=UTF-8''" + encoded + "\r\n");
+            copy(src, out);
+        }
+    }
+    private File storageFile(String relative) throws IOException {
+        if (relative == null) relative = "";
+        if (relative.startsWith("/") || relative.indexOf('\\') >= 0) throw new Problem(400, "无效目录路径");
+        for (char c : relative.toCharArray()) if (Character.isISOControl(c)) throw new Problem(400, "无效目录路径");
+        for (String part : relative.split("/", -1)) {
+            if (part.equals(".") || part.equals("..") || part.equalsIgnoreCase(".eink-partials")) throw new Problem(403, "此目录不可访问");
+        }
+        File f = new File(storage, relative);
+        if (!f.getCanonicalFile().equals(f.getAbsoluteFile()) || !(f.equals(storage) || f.getPath().startsWith(storage.getPath() + File.separator)))
+            throw new Problem(403, "不能访问共享存储以外的目录");
+        if (!f.exists()) throw new Problem(404, "文件或目录不存在");
+        if (!f.canRead()) throw new Problem(403, "没有读取此目录或文件的权限");
+        return f;
+    }
+    private String storageList(File directory) throws IOException {
+        if (!directory.isDirectory()) throw new Problem(400, "请选择目录");
+        File[] files = directory.listFiles(); if (files == null) throw new Problem(403, "此目录不可读取");
+        Arrays.sort(files, Comparator.comparing((File f) -> !f.isDirectory()).thenComparing(File::getName));
+        StringBuilder result = new StringBuilder("[");
+        for (File f : files) {
+            if (f.getName().equalsIgnoreCase(".eink-partials") || !f.canRead() || !f.getCanonicalFile().equals(f.getAbsoluteFile()) || !(f.isDirectory() || f.isFile())) continue;
+            if (result.length() > 1) result.append(',');
+            String relative = storage.toURI().relativize(f.toURI()).getPath();
+            if (relative.endsWith("/")) relative = relative.substring(0, relative.length() - 1);
+            result.append("{\"name\":").append(quote(f.getName())).append(",\"path\":").append(quote(relative))
+                .append(",\"directory\":").append(f.isDirectory()).append(",\"size\":").append(f.isFile() ? f.length() : 0).append('}');
+        }
+        return result.append(']').toString();
     }
 
     private void upload(String name, long size, InputStream in) throws IOException {
@@ -169,13 +210,16 @@ public final class TransferServer implements Closeable {
         return result.append(']').toString();
     }
     private static String queryName(String query) throws IOException {
-        String name = null;
-        for (String part : query.split("&")) if (part.startsWith("name=")) {
-            if (name != null) throw new Problem(400, "文件名参数重复");
-            try { name = URLDecoder.decode(part.substring(5), "UTF-8"); }
-            catch (IllegalArgumentException e) { throw new Problem(400, "文件名编码无效"); }
+        return queryValue(query, "name");
+    }
+    private static String queryValue(String query, String key) throws IOException {
+        String value = null;
+        for (String part : query.split("&")) if (part.startsWith(key + "=")) {
+            if (value != null) throw new Problem(400, "请求参数重复");
+            try { value = URLDecoder.decode(part.substring(key.length() + 1), "UTF-8"); }
+            catch (IllegalArgumentException e) { throw new Problem(400, "请求编码无效"); }
         }
-        return name;
+        return value;
     }
     private static String line(InputStream in, int max) throws IOException {
         ByteArrayOutputStream data = new ByteArrayOutputStream(); int c;
