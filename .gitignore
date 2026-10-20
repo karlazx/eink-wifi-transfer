@@ -1,0 +1,38 @@
+# Android / Gradle 构建与本机配置
+.gradle/
+**/build/
+local.properties
+.idea/
+*.iml
+.DS_Store
+
+# 签名、账号与密钥（示例配置可显式提交）
+*.jks
+*.keystore
+keystore.properties
+signing.properties
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+google-services.json
+
+# 原应用资产、实机数据与本地调研材料不得入库
+*.apk
+*.aab
+*.apks
+*.xapk
+original/
+research-local/
+device-data/
+backups/
+evidence-local/
+*.log
+
+# 测试与构建临时文件
+tmp/
+.tmp/
+captures/
+__pycache__/
+*.pyc

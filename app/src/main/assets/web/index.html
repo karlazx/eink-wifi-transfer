@@ -1,0 +1,9 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>墨屏传文件</title><link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script></head>
+<body><main>
+<header><span class="tag">局域网直传</span><h1>墨屏传文件</h1><p>把文件送到阅读器，打开浏览器就能传。</p></header>
+<section><h2>选择文件，开始传输</h2><p>支持全部文件类型，包括无扩展名和零字节文件。单文件上限 2 GiB。</p><label class="choose">选择文件（可多选）<input id="picker" type="file" multiple></label><p class="hint">保存至共享存储 / EInkTransfer。同名文件不覆盖。</p></section>
+<section><h2>本次上传</h2><p id="queue-empty" class="hint">选择文件后，在这里查看进度。</p><ul id="queue"></ul></section>
+<section><div class="section-head"><h2>设备上的文件 <span id="count"></span></h2><button id="refresh">刷新列表</button></div><p id="message" role="status" aria-live="polite"></p><ul id="files"></ul></section>
+<footer>请保持阅读器传输界面打开，并连接同一 Wi-Fi。<br>仅在可信局域网使用：同网用户可上传、下载和删除本目录文件。<br>只传输文件，不自动安装或打开。MIT 开源项目。</footer>
+</main></body></html>
