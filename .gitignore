@@ -34,3 +34,5 @@ evidence-local/
 tmp/
 .tmp/
 captures/
+__pycache__/
+*.pyc

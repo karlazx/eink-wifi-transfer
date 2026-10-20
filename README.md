@@ -1,28 +1,75 @@
-# EInk WiFi Transfer
+# 墨屏传文件 · EInk WiFi Transfer
 
-面向 Android 墨水屏阅读器的局域网文件传输项目，计划支持全部类型文件，以 MIT 协议开源。
+给 Android 墨水屏阅读器用的局域网文件传输应用。阅读器打开应用，同一 Wi-Fi 下的手机或电脑用浏览器访问屏幕上的地址或扫描二维码，即可传输文件。
 
-当前处于 M1 调研与候选规格阶段，尚未实现应用，暂无可安装 APK。尚未创建远端开源仓库或公开发布。
+**支持全部文件类型**：不设扩展名、MIME 或内容白名单，包括 APK、字体、压缩包、自定义扩展名、无扩展名及零字节文件。只负责原样传输，不自动打开或安装。
 
-## 第一迭代计划
+## 首版功能
 
-阅读器在前台启动服务，同 WiFi 的手机或电脑通过浏览器访问地址或扫描二维码，进行多文件队列上传、进度查看、取消、文件列表、下载及确认删除。客户端和服务端不设格式白名单，支持无扩展名和任意二进制内容。
+- 阅读器黑白界面、访问地址、二维码和接收文件列表。
+- 网页多选串行上传、进度、取消和失败提示。
+- 查看名称与大小、附件下载、确认删除；重名拒绝覆盖。
+- 保存至共享存储 `EInkTransfer`，与原应用文件隔离。
+- 上传中断清理临时文件；已完整提交的文件保留。
+- 手动停止、确认退出或切换应用时停止服务。保持界面打开时防止休眠。
 
-候选接收位置为共享存储独立 `EInkTransfer` 目录，不迁移原应用文件；拒绝覆盖重名文件；不解析文件内容或自动安装 APK。首版以 Likebook K78W、Android 8.1 为实机验收基线。HTTP 服务仅适用于可信局域网，默认只在应用界面可见时运行。
+仅在可信局域网使用。服务没有账号或配对认证，开启期间同网用户可以管理接收目录。文件使用 HTTP 传输，不经过云端。
 
-上述内容尚待用户确认，不代表已完成或已测试。后续依据使用反馈逐个迭代，不提前承诺后台传输、断点续传或书库集成。
+## 安装和使用
 
-## 文档
+1. 安装本项目 APK，打开“墨屏传文件”，授予文件读写权限。
+2. 确保阅读器与手机 / 电脑连接同一 Wi-Fi，关闭其他占用 8080 端口的传书应用。
+3. 在浏览器输入阅读器显示的完整地址，或扫描二维码。
+4. 选择文件开始传输，完成后可在网页下载 / 删除，或在阅读器查看接收列表。
+5. 使用完毕点击“停止服务”或返回并确认退出。
 
-- [现有应用调研](docs/research/现有WiFi传书调研.md)
-- [M1 候选需求与验收](docs/iterations/M1/PRD.md)
-- [M1 文本原型与状态](docs/iterations/M1/UX.md)
-- [路线图](docs/ROADMAP.md)
-- [当前项目状态](docs/PROJECT_STATUS.md)
-- [协作规范](AGENTS.md)
+包名 `io.github.einktransfer`，独立安装，不替换原厂传书应用。最低 Android 8.0 / API 26；已在 Likebook K78W、Android 8.1 实机验证。新版 Android 的共享存储机制尚未适配，首版不承诺兼容。
 
-## 独立实现与许可证
+单文件防护上限为 2 GiB，仍受可用空间及文件系统限制；按用户要求未执行大文件测试，不承诺大文件性能。文件名 UTF-8 最多 240 字节，不能含路径或控制字符。
 
-原应用仅用于行为调研。本项目将独立编写代码、界面和文案，不收录原应用 APK、网页代码、图标、截图或用户文件。研究临时材料不作为项目依赖。
+## 从源码构建
 
-本仓库采用 [MIT 许可证](LICENSE)。第三方依赖应保留各自许可证与版权说明。源码、构建和安装操作尚未形成，实施后补充可复现的中文步骤。
+需要 Python 3.9+、JDK 17，以及 Android SDK 的 `platforms;android-34` 和 `build-tools;34.0.0`。无需 Gradle 或 Android Studio。首次构建联网从 Maven Central 获取 ZXing 3.5.3，校验固定 SHA-256，后续可离线构建。
+
+```sh
+export ANDROID_SDK_ROOT=/你的/Android/sdk
+export EINK_JAVA_HOME=/你的/jdk-17
+python3 scripts/build.py
+```
+
+macOS 默认查找 `~/Library/Android/sdk` 和系统登记的 JDK 17。其他环境可通过上述变量指定；SDK 版本可用 `EINK_BUILD_TOOLS`、`EINK_ANDROID_PLATFORM` 调整，但默认组合为本次验证配置。
+
+生成 `build/eink-wifi-transfer-0.1.0-debug.apk`，可通过 ADB 安装：
+
+```sh
+adb install -r build/eink-wifi-transfer-0.1.0-debug.apk
+adb shell am start -n io.github.einktransfer/.MainActivity
+```
+
+此版本为调试签名的首版预览。构建脚本在 `build/debug.keystore` 生成本机调试密钥，不提交到仓库；清理或更换密钥后，旧安装与新 APK 签名可能不同，需要卸载后重装。正式发布签名与应用商店分发留待后续安排。
+
+## 验证
+
+```sh
+# 需要 JDK；监听回环地址的临时端口
+python3 -m unittest discover -s tests -v
+# 需要 Node.js 18+；隔离 DOM / 可控网络下测试真实网页队列脚本
+node --test tests/test_web.js
+# 阅读器已打开应用时，可选执行小文件实测并自动清理自建样本
+python3 scripts/smoke_device.py --url http://阅读器地址:8080
+```
+
+测试仅在临时目录或唯一命名的自建样本上操作，不清理用户文件。实际测试范围和未验证项见 [M1 测试记录](docs/iterations/M1/TEST_REPORT.md)。
+
+## 项目文档
+
+- [需求与验收范围](docs/iterations/M1/PRD.md)、[交互说明](docs/iterations/M1/UX.md)
+- [实现说明](docs/iterations/M1/IMPLEMENTATION.md)、[当前状态](docs/PROJECT_STATUS.md)
+- [现有应用调研](docs/research/现有WiFi传书调研.md)、[路线图](docs/ROADMAP.md)
+- [协作规范](AGENTS.md)、[第三方许可](THIRD_PARTY_NOTICES.md)
+
+## 开源
+
+本项目原创代码和文档采用 [MIT 许可证](LICENSE)。原厂应用仅用于行为研究，不收录其 APK、代码、网页、图片或用户文件。二维码组件 ZXing Core 按 Apache 2.0 许可使用，完整许可证与上游 NOTICE 同时随源码和 APK 提供。
+
+后续功能根据实际需求逐个迭代；每个新迭代新建分支，实现和验证完成后合并 `main`。
