@@ -20,8 +20,9 @@ class TransferTests(unittest.TestCase):
     def setUpClass(cls):
         cls.temp = tempfile.TemporaryDirectory(prefix='eink-server-test-')
         cls.base = Path(cls.temp.name)
-        cls.storage = cls.base / 'received'
-        cls.storage.mkdir()
+        cls.shared = cls.base / 'shared'
+        cls.storage = cls.shared / 'received'
+        cls.storage.mkdir(parents=True)
         classes = cls.base / 'classes'
         classes.mkdir()
         subprocess.run(['javac', '--release', '8', '-encoding', 'UTF-8', '-d', str(classes),
@@ -110,7 +111,7 @@ class TransferTests(unittest.TestCase):
         self.assertEqual(self.request('OPTIONS', '/api/file')[0], 404)
 
     def test_08_size_limit_before_body(self):
-        self.assertEqual(self.request('PUT', self.file('oversized'), b'', {'Content-Length': '2147483649'})[0], 413)
+        self.assertEqual(self.request('PUT', self.file('oversized'), b'', {'Content-Length': '5368709121'})[0], 413)
         self.assertEqual(self.request('PUT', self.file('negative'), b'', {'Content-Length': '-1'})[0], 411)
 
     def test_09_interrupted_upload_cleans_partial(self):
@@ -142,6 +143,54 @@ class TransferTests(unittest.TestCase):
         self.assertEqual(body, data)
         self.assertIn('attachment', headers['Content-Disposition'])
         self.assertIn('nosniff', headers['X-Content-Type-Options'])
+
+    def test_12_all_files_nested_browse_download(self):
+        library = self.shared / '图书 空格'
+        library.mkdir(exist_ok=True)
+        (library / '书 % # & +.bin').write_bytes(bytes(range(256)))
+        code, _, listing = self.request('GET', '/api/storage?path=')
+        self.assertEqual(code, 200)
+        item = next(f for f in json.loads(listing) if f['name'] == library.name)
+        self.assertTrue(item['directory'])
+        self.assertEqual(item['path'], library.name)
+        code, _, listing = self.request('GET', '/api/storage?path=' + quote(library.name, safe=''))
+        self.assertEqual(code, 200)
+        filename = json.loads(listing)[0]['path']
+        code, headers, body = self.request('GET', '/api/storage/file?path=' + quote(filename, safe=''))
+        self.assertEqual(code, 200)
+        self.assertEqual(body, bytes(range(256)))
+        self.assertIn('attachment', headers['Content-Disposition'])
+
+    def test_13_all_files_is_read_only_at_server(self):
+        (self.shared / 'readonly.txt').write_bytes(b'unchanged')
+        for method in ['PUT', 'POST', 'DELETE', 'PATCH']:
+            for endpoint in ['/api/storage?path=', '/api/storage/file?path=readonly.txt']:
+                self.assertEqual(self.request(method, endpoint, b'change')[0], 405)
+        self.assertEqual((self.shared / 'readonly.txt').read_bytes(), b'unchanged')
+        self.assertEqual(self.request('DELETE', self.file('../readonly.txt'))[0], 400)
+
+    def test_14_all_files_cannot_escape_or_read_partial(self):
+        outside = self.base / 'outside-storage.txt'
+        outside.write_bytes(b'private')
+        (self.shared / 'outside-link').symlink_to(outside)
+        for path in ['../outside-storage.txt', '/etc/passwd', 'received/../readonly.txt', 'received/.eink-partials', 'outside-link', 'a\\b']:
+            code = self.request('GET', '/api/storage/file?path=' + quote(path, safe=''))[0]
+            self.assertIn(code, [400, 403], path)
+        listing = json.loads(self.request('GET', '/api/storage?path=')[2])
+        self.assertNotIn('outside-link', [f['name'] for f in listing])
+        listing = json.loads(self.request('GET', '/api/storage?path=received')[2])
+        self.assertNotIn('.eink-partials', [f['name'] for f in listing])
+        (self.shared / 'outside-link').unlink()
+
+    def test_15_length_above_two_gib_is_not_rejected_as_oversized(self):
+        # 只发送长度声明并立即结束连接，不创建或传输大文件。
+        s = socket.create_connection(('127.0.0.1', self.port))
+        s.sendall(('PUT ' + self.file('length-only') + ' HTTP/1.1\r\nHost: 127.0.0.1:' + str(self.port) + '\r\nContent-Length: 3221225472\r\n\r\n').encode())
+        s.shutdown(socket.SHUT_WR)
+        response = s.recv(4096)
+        self.assertNotIn(b' 413 ', response)
+        self.assertTrue(response.startswith(b'HTTP/1.1 400 ') or response.startswith(b'HTTP/1.1 507 '))
+        s.close()
 
 
 if __name__ == '__main__':

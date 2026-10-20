@@ -2,8 +2,10 @@
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>墨屏传文件</title><link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script></head>
 <body><main>
 <header><span class="tag">局域网直传</span><h1>墨屏传文件</h1><p>把文件送到阅读器，打开浏览器就能传。</p></header>
-<section><h2>选择文件，开始传输</h2><p>支持全部文件类型，包括无扩展名和零字节文件。单文件上限 2 GiB。</p><label class="choose">选择文件（可多选）<input id="picker" type="file" multiple></label><p class="hint">保存至共享存储 / EInkTransfer。同名文件不覆盖。</p></section>
+<section><h2>选择文件，开始传输</h2><p>支持全部文件类型，包括无扩展名和零字节文件。单文件上限 5 GiB。</p><label class="choose">选择文件（可多选）<input id="picker" type="file" multiple></label><p class="hint">保存至共享存储 / EInkTransfer。同名文件不覆盖。</p></section>
 <section><h2>本次上传</h2><p id="queue-empty" class="hint">选择文件后，在这里查看进度。</p><ul id="queue"></ul></section>
-<section><div class="section-head"><h2>设备上的文件 <span id="count"></span></h2><button id="refresh">刷新列表</button></div><p id="message" role="status" aria-live="polite"></p><ul id="files"></ul></section>
-<footer>请保持阅读器传输界面打开，并连接同一 Wi-Fi。<br>仅在可信局域网使用：同网用户可上传、下载和删除本目录文件。<br>只传输文件，不自动安装或打开。MIT 开源项目。</footer>
+<section><h2>设备上的文件</h2><div class="tabs" role="tablist" aria-label="文件范围"><button id="tab-received" role="tab" aria-selected="true">接收目录</button><button id="tab-all" role="tab" aria-selected="false">全部文件 · 只读</button></div>
+<div id="received-panel" role="tabpanel"><div class="section-head"><h3>接收目录 <span id="count"></span></h3><button id="refresh">刷新列表</button></div><p id="message" role="status" aria-live="polite"></p><ul id="files"></ul></div>
+<div id="all-panel" role="tabpanel" hidden><p class="hint">浏览阅读器可读取的共享存储，支持下载，不提供删除或修改。</p><div class="section-head"><h3 id="storage-path">共享存储 /</h3><div class="actions"><button id="storage-up">上一级</button><button id="storage-refresh">刷新</button></div></div><p id="storage-message" role="status" aria-live="polite"></p><ul id="storage-files"></ul></div></section>
+<footer>请保持阅读器传输界面打开，并连接同一 Wi-Fi。<br>仅在可信局域网使用：同网用户可管理接收目录，并只读访问共享存储。<br>打开文件或安装 APK，请在阅读器点击“打开文件管理器”。MIT 开源项目。</footer>
 </main></body></html>

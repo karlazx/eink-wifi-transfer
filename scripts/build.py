@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-"""使用 JDK 和 Android SDK 构建调试 APK，无需 Gradle 或 Android Studio。"""
+"""使用 JDK 和 Android SDK 构建 APK；--release 使用本地长期发布签名。"""
+import argparse
 import hashlib
+import json
 import os
 from pathlib import Path
 import shutil
@@ -8,6 +10,7 @@ import subprocess
 import sys
 import urllib.request
 import zipfile
+import secrets
 
 ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / 'build'
@@ -15,13 +18,18 @@ SDK = Path(os.environ.get('ANDROID_SDK_ROOT') or os.environ.get('ANDROID_HOME') 
 TOOLS_VERSION = os.environ.get('EINK_BUILD_TOOLS', '34.0.0')
 PLATFORM = os.environ.get('EINK_ANDROID_PLATFORM', 'android-34')
 ZXING_SHA = '8d8064c1636fdaef7189dd9055c7d59950a8940a12f2293956446ec3c109fd82'
+VERSION = '1.0.0'
+VERSION_CODE = '10000'
 
 
-def run(*args):
-    subprocess.run([str(a) for a in args], check=True)
+def run(*args, env=None):
+    subprocess.run([str(a) for a in args], check=True, env=env)
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--release', action='store_true', help='使用长期发布签名构建正式 APK')
+    args = parser.parse_args()
     tools = SDK / 'build-tools' / TOOLS_VERSION
     android = SDK / 'platforms' / PLATFORM / 'android.jar'
     if not android.exists() or not (tools / 'aapt').exists():
@@ -62,19 +70,36 @@ def main():
         for file in classes.rglob('*.class'):
             archive.write(file, file.relative_to(classes))
     # 直接运行 D8 的 Java 入口，确保与编译器使用同一 JDK。
-    run(java_tool('java'), '-cp', tools / 'lib/d8.jar', 'com.android.tools.r8.D8', '--min-api', '26', '--lib', android, '--output', dex, jar, dep)
+    run(java_tool('java'), '-cp', tools / 'lib/d8.jar', 'com.android.tools.r8.D8', '--release', '--min-api', '26', '--lib', android, '--output', dex, jar, dep)
     unsigned = BUILD / 'unsigned.apk'
-    run(tools / 'aapt', 'package', '-f', '-M', src / 'AndroidManifest.xml', '-I', android, '-S', src / 'res', '-A', packaged_assets, '-F', unsigned, '--version-code', '1', '--version-name', '0.1.0')
+    run(tools / 'aapt', 'package', '-f', '-M', src / 'AndroidManifest.xml', '-I', android, '-S', src / 'res', '-A', packaged_assets, '-F', unsigned, '--version-code', VERSION_CODE, '--version-name', VERSION)
     with zipfile.ZipFile(unsigned, 'a', compression=zipfile.ZIP_DEFLATED) as archive:
         for file in dex.glob('*.dex'):
             archive.write(file, file.name)
     aligned = BUILD / 'aligned.apk'
     run(tools / 'zipalign', '-f', '4', unsigned, aligned)
-    key = BUILD / 'debug.keystore'
-    if not key.exists():
-        run(java_tool('keytool'), '-genkeypair', '-keystore', key, '-storepass', 'android', '-keypass', 'android', '-alias', 'androiddebugkey', '-keyalg', 'RSA', '-keysize', '2048', '-validity', '10000', '-dname', 'CN=Android Debug,O=EInk Transfer,C=CN')
-    output = BUILD / 'eink-wifi-transfer-0.1.0-debug.apk'
-    run(java_tool('java'), '-jar', tools / 'lib/apksigner.jar', 'sign', '--ks', key, '--ks-pass', 'pass:android', '--key-pass', 'pass:android', '--out', output, aligned)
+    if args.release:
+        signing = ROOT / '.signing'
+        signing.mkdir(mode=0o700, exist_ok=True)
+        config = signing / 'signing.json'
+        if not config.exists():
+            with open(config, 'x', opener=lambda path, flags: os.open(path, flags, 0o600)) as file:
+                json.dump({'alias': 'einkrelease', 'password': secrets.token_urlsafe(36)}, file)
+        credentials = json.loads(config.read_text())
+        key = signing / 'release.keystore'
+        signing_env = dict(os.environ, EINK_SIGN_PASSWORD=credentials['password'])
+        if not key.exists():
+            run(java_tool('keytool'), '-genkeypair', '-keystore', key, '-storetype', 'PKCS12', '-storepass:env', 'EINK_SIGN_PASSWORD', '-keypass:env', 'EINK_SIGN_PASSWORD', '-alias', credentials['alias'], '-keyalg', 'RSA', '-keysize', '3072', '-validity', '10000', '-dname', 'CN=EInk WiFi Transfer Release,O=EInk Transfer,C=CN', env=signing_env)
+            key.chmod(0o600)
+        alias, password = credentials['alias'], 'env:EINK_SIGN_PASSWORD'
+        print('正式签名材料保留在 .signing/；请私下备份该目录，勿上传。')
+    else:
+        key = BUILD / 'debug.keystore'
+        if not key.exists():
+            run(java_tool('keytool'), '-genkeypair', '-keystore', key, '-storepass', 'android', '-keypass', 'android', '-alias', 'androiddebugkey', '-keyalg', 'RSA', '-keysize', '2048', '-validity', '10000', '-dname', 'CN=Android Debug,O=EInk Transfer,C=CN')
+        alias, password, signing_env = 'androiddebugkey', 'pass:android', None
+    output = BUILD / ('eink-wifi-transfer-' + VERSION + ('' if args.release else '-debug') + '.apk')
+    run(java_tool('java'), '-jar', tools / 'lib/apksigner.jar', 'sign', '--ks', key, '--ks-key-alias', alias, '--ks-pass', password, '--key-pass', password, '--out', output, aligned, env=signing_env)
     run(java_tool('java'), '-jar', tools / 'lib/apksigner.jar', 'verify', output)
     print(f'构建完成：{output}\nSHA-256：{hashlib.sha256(output.read_bytes()).hexdigest()}')
 
